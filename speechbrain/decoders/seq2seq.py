@@ -938,7 +938,7 @@ class S2SRNNBeamSearcher(S2SBeamSearcher):
         return hs, c
 
     def forward_step(self, inp_tokens, memory, enc_states, enc_lens):
-        #with torch.no_grad():
+        # with torch.no_grad():
         hs, c = memory
         e = self.emb(inp_tokens)
         dec_out, hs, c, w = self.dec.forward_step(

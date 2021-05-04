@@ -184,7 +184,7 @@ seq_cost: !name:speechbrain.nnet.losses.nll_loss
 
 mWER_cost: !name:speechbrain.nnet.losses.minWER_loss
    blank_index: !ref <blank_index>
-   mode: "Num_Word_Errors" 
+   mode: "Num_Word_Errors"
 
 # Models
 lm_model: !new:recipes.LibriSpeech.LM.pretrained.pretrained.LM
