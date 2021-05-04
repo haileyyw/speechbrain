@@ -24,6 +24,7 @@ from speechbrain.nnet.loss.minWER_loss import minWER
 
 logger = logging.getLogger(__name__)
 
+
 def minWER_loss(
     hypotheses,
     targets,
@@ -80,6 +81,7 @@ def minWER_loss(
         separator_index,
         mode,
     )
+
 
 def transducer_loss(
     log_probs, targets, input_lens, target_lens, blank_index, reduction="mean"

@@ -115,7 +115,6 @@ def test_transducer_loss():
     assert out_cost.item() == 2.247833251953125
 
 
-
 def test_minWER_loss():
     # Make this its own test since it can only be run
     # if numba is installed and a GPU is available
