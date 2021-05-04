@@ -533,7 +533,7 @@ class S2SBeamSearcher(S2SBaseSearcher):
         )
         top_scores = torch.stack((top_scores), dim=0).view(batch_size, -1)
         top_lengths = torch.tensor(
-            top_lengths, dtype=torch.int, device=top_scores.device
+            top_lengths, dtype=torch.int32, device=top_scores.device
         )
         # Get topk indices
         topk_scores, indices = top_scores.topk(self.topk, dim=-1)
@@ -815,6 +815,9 @@ class S2SBeamSearcher(S2SBaseSearcher):
             predictions, eos_id=self.eos_index
         )
 
+        if self.topk > 1:
+            return predictions, topk_scores, topk_hyps, topk_lengths
+
         if self.return_log_probs:
             return predictions, topk_scores, log_probs
         else:
@@ -935,13 +938,13 @@ class S2SRNNBeamSearcher(S2SBeamSearcher):
         return hs, c
 
     def forward_step(self, inp_tokens, memory, enc_states, enc_lens):
-        with torch.no_grad():
-            hs, c = memory
-            e = self.emb(inp_tokens)
-            dec_out, hs, c, w = self.dec.forward_step(
-                e, hs, c, enc_states, enc_lens
-            )
-            log_probs = self.softmax(self.fc(dec_out) / self.temperature)
+        #with torch.no_grad():
+        hs, c = memory
+        e = self.emb(inp_tokens)
+        dec_out, hs, c, w = self.dec.forward_step(
+            e, hs, c, enc_states, enc_lens
+        )
+        log_probs = self.softmax(self.fc(dec_out) / self.temperature)
         # average attn weight of heads when attn_type is multiheadlocation
         if self.dec.attn_type == "multiheadlocation":
             w = torch.mean(w, dim=1)
