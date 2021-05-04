@@ -36,8 +36,9 @@ import torch
 import speechbrain as sb
 from speechbrain.utils.data_utils import download_file
 from speechbrain.utils.data_utils import undo_padding
-#os.environ["CUDA_VISIBLE_DEVICES"]="2"
-#os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
+
+# os.environ["CUDA_VISIBLE_DEVICES"]="2"
+# os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 torch.cuda.set_device(1)
 
 
@@ -91,11 +92,13 @@ class ASR(sb.Brain):
                 p_ctc = self.hparams.log_softmax(logits)
                 return p_ctc, p_seq, wav_lens
             elif (
-                current_epoch > self.hparams.number_of_ctc_epochs 
+                current_epoch > self.hparams.number_of_ctc_epochs
                 and self.hparams.mwer_training
             ):
                 # set max decoding step to the label length
-                self.hparams.sampler.max_decode_ratio = target_words.size(1) / x.size(1) * 1.5
+                self.hparams.sampler.max_decode_ratio = (
+                    target_words.size(1) / x.size(1) * 1.5
+                )
                 (
                     p_tokens,
                     topk_hyps,
@@ -108,7 +111,7 @@ class ASR(sb.Brain):
                 return p_seq, wav_lens
         else:
             if stage == sb.Stage.VALID:
-                #p_tokens, scores = self.hparams.valid_search(x, wav_lens)
+                # p_tokens, scores = self.hparams.valid_search(x, wav_lens)
                 (
                     p_tokens,
                     topk_hyps,
@@ -116,7 +119,7 @@ class ASR(sb.Brain):
                     topk_len,
                 ) = self.hparams.valid_search(x, wav_lens)
             else:
-                #p_tokens, scores = self.hparams.test_search(x, wav_lens)
+                # p_tokens, scores = self.hparams.test_search(x, wav_lens)
                 (
                     p_tokens,
                     topk_hyps,
@@ -133,10 +136,17 @@ class ASR(sb.Brain):
             if current_epoch <= self.hparams.number_of_ctc_epochs:
                 p_ctc, p_seq, wav_lens = predictions
             elif (
-                current_epoch > self.hparams.number_of_ctc_epochs 
-                and current_epoch < self.hparams.number_of_epochs + self.hparams.mwer_training
+                current_epoch > self.hparams.number_of_ctc_epochs
+                and current_epoch
+                < self.hparams.number_of_epochs + self.hparams.mwer_training
             ):
-                p_seq, wav_lens, topk_hyps, topk_scores, topk_length = predictions
+                (
+                    p_seq,
+                    wav_lens,
+                    topk_hyps,
+                    topk_scores,
+                    topk_length,
+                ) = predictions
             else:
                 p_seq, wav_lens = predictions
         else:
@@ -180,12 +190,20 @@ class ASR(sb.Brain):
             loss += (1 - self.hparams.ctc_weight) * loss_seq
         elif (
             stage == sb.Stage.TRAIN
-            and current_epoch > self.hparams.number_of_ctc_epochs 
-            and current_epoch < self.hparams.number_of_epochs + self.hparams.mwer_training
+            and current_epoch > self.hparams.number_of_ctc_epochs
+            and current_epoch
+            < self.hparams.number_of_epochs + self.hparams.mwer_training
         ):
-            loss = self.hparams.minPER_cost(
-                topk_hyps, target_tokens, topk_length, abs_length, topk_scores,
-            ) * 0.1
+            loss = (
+                self.hparams.minPER_cost(
+                    topk_hyps,
+                    target_tokens,
+                    topk_length,
+                    abs_length,
+                    topk_scores,
+                )
+                * 0.1
+            )
             loss += loss_seq
         else:
             loss = loss_seq
@@ -213,7 +231,7 @@ class ASR(sb.Brain):
         predictions = self.compute_forward(inputs, targets, sb.Stage.TRAIN)
         loss = self.compute_objectives(predictions, targets, sb.Stage.TRAIN)
         loss.backward()
-        #if self.check_gradients(loss):
+        # if self.check_gradients(loss):
         self.optimizer.step()
         self.optimizer.zero_grad()
         return loss.detach()
