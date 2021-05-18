@@ -257,7 +257,7 @@ class Separation(sb.Brain):
     def add_speed_perturb(self, targets, targ_lens):
         """Adds speed perturbation and random_shift to the input signals"""
 
-        min_len = -1
+        min_len = 2 ** 32
         recombine = False
 
         if self.hparams.use_speedperturb:
@@ -270,11 +270,7 @@ class Separation(sb.Brain):
                     targets[:, :, i], targ_lens
                 )
                 new_targets.append(new_target)
-                if i == 0:
-                    min_len = new_target.shape[-1]
-                else:
-                    if new_target.shape[-1] < min_len:
-                        min_len = new_target.shape[-1]
+                min_len = min(min_len, new_target.shape[-1])
 
             if self.hparams.use_rand_shift:
                 # Performing random_shift (independently on each source)
@@ -290,16 +286,9 @@ class Separation(sb.Brain):
 
             # Re-combination
             if recombine:
-                if self.hparams.use_speedperturb:
-                    targets = torch.zeros(
-                        targets.shape[0],
-                        min_len,
-                        targets.shape[-1],
-                        device=targets.device,
-                        dtype=torch.float,
-                    )
-                for i, new_target in enumerate(new_targets):
-                    targets[:, :, i] = new_targets[i][:, 0:min_len]
+                targets = torch.stack(
+                    [x[..., :min_len] for x in new_targets], 1
+                )
 
         mix = targets.sum(-1)
         return mix, targets
