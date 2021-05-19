@@ -286,9 +286,7 @@ class Separation(sb.Brain):
 
             # Re-combination
             if recombine:
-                targets = torch.stack(
-                    [x[:, :min_len, :] for x in new_targets], -1
-                )
+                targets = torch.stack([x[:, :min_len] for x in new_targets], -1)
 
         mix = targets.sum(-1)
         return mix, targets
