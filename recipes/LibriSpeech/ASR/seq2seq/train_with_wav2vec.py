@@ -53,63 +53,67 @@ class ASR(sb.core.Brain):
                 wavs = self.hparams.augmentation(wavs, wav_lens)
 
         # Forward pass
-        feats = self.modules.wav2vec2(wavs)
-        print(feats.shape)
-        x = self.modules.enc(feats)
-        print(x.shape)
+        x = self.modules.wav2vec2(wavs)
+        # x = self.modules.enc(feats)
 
         e_in = self.modules.emb(tokens_bos)  # y_in bos + tokens
         h, _ = self.modules.dec(e_in, x, wav_lens)
-        # Output layer for seq2seq log-probabilities
-        logits = self.modules.seq_lin(h)
-        p_seq = self.hparams.log_softmax(logits)
 
         # Compute outputs
-        if stage == sb.Stage.TRAIN:
-            current_epoch = self.hparams.epoch_counter.current
-            if current_epoch <= self.hparams.number_of_ctc_epochs:
-                # Output layer for ctc log-probabilities
-                logits = self.modules.ctc_lin(x)
-                p_ctc = self.hparams.log_softmax(logits)
-                return p_ctc, p_seq, wav_lens
-            else:
-                return p_seq, wav_lens
-        else:
-            p_tokens, scores = self.hparams.beam_searcher(x, wav_lens)
-            return p_seq, wav_lens, p_tokens
+        p_seq, p_ctc, p_tokens = None, None, None
+        if self.hparams.ctc_weight != 1:
+            # Output layer for seq2seq log-probabilities
+            logits = self.modules.seq_lin(h)
+            p_seq = self.hparams.log_softmax(logits)
+
+        # Compute outputs
+        current_epoch = self.hparams.epoch_counter.current
+        if (
+            stage == sb.Stage.TRAIN
+            and current_epoch <= self.hparams.number_of_ctc_epochs
+        ) or self.hparams.ctc_weight == 1:
+            # Output layer for ctc log-probabilities
+            logits = self.modules.ctc_lin(x)
+            p_ctc = self.hparams.log_softmax(logits)
+
+        if stage == sb.Stage.VALID:
+            p_tokens, scores = self.hparams.valid_search(x, wav_lens)
+        elif stage == sb.Stage.TEST:
+            p_tokens, scores = self.hparams.test_search(x, wav_lens)
+
+        return p_seq, p_ctc, wav_lens, p_tokens
 
     def compute_objectives(self, predictions, batch, stage):
         """Computes the loss (CTC+NLL) given predictions and targets."""
 
-        current_epoch = self.hparams.epoch_counter.current
-        if stage == sb.Stage.TRAIN:
-            if current_epoch <= self.hparams.number_of_ctc_epochs:
-                p_ctc, p_seq, wav_lens = predictions
-            else:
-                p_seq, wav_lens = predictions
-        else:
-            p_seq, wav_lens, predicted_tokens = predictions
+        p_seq, p_ctc, wav_lens, predicted_tokens = predictions
 
         ids = batch.id
         tokens_eos, tokens_eos_lens = batch.tokens_eos
         tokens, tokens_lens = batch.tokens
+        loss, loss_seq, loss_ctc = 0.0, 0.0, 0.0
 
-        loss_seq = self.hparams.seq_cost(
-            p_seq, tokens_eos, length=tokens_eos_lens
-        )
+        if hasattr(self.modules, "env_corrupt") and stage == sb.Stage.TRAIN:
+            tokens_eos = torch.cat([tokens_eos, tokens_eos], dim=0)
+            tokens_eos_lens = torch.cat(
+                [tokens_eos_lens, tokens_eos_lens], dim=0
+            )
+            tokens = torch.cat([tokens, tokens], dim=0)
+            tokens_lens = torch.cat([tokens_lens, tokens_lens], dim=0)
+
+        if self.hparams.ctc_weight != 1:
+            loss_seq = self.hparams.seq_cost(
+                p_seq, tokens_eos, length=tokens_eos_lens
+            )
+            loss = loss_seq
 
         # Add ctc loss if necessary
-        if (
-            stage == sb.Stage.TRAIN
-            and current_epoch <= self.hparams.number_of_ctc_epochs
-        ):
+        if p_ctc is not None:
             loss_ctc = self.hparams.ctc_cost(
                 p_ctc, tokens, wav_lens, tokens_lens
             )
             loss = self.hparams.ctc_weight * loss_ctc
             loss += (1 - self.hparams.ctc_weight) * loss_seq
-        else:
-            loss = loss_seq
 
         if stage != sb.Stage.TRAIN:
             # Decode token terms to words

@@ -87,7 +87,8 @@ bos_index: 1
 eos_index: 2
 min_decode_ratio: 0.0
 max_decode_ratio: 1.0
-beam_size: 80
+valid_beam_size: 10
+test_beam_size: 10
 eos_threshold: 1.5
 using_max_attn_shift: False
 max_attn_shift: 140
@@ -189,6 +190,40 @@ modules:
 model: !new:torch.nn.ModuleList
    - [!ref <enc>, !ref <emb>, !ref <dec>, !ref <ctc_lin>, !ref <seq_lin>]
 
+valid_search: !new:speechbrain.decoders.S2SRNNBeamSearcher
+   embedding: !ref <emb>
+   decoder: !ref <dec>
+   linear: !ref <seq_lin>
+   ctc_linear: !ref <ctc_lin>
+   bos_index: !ref <bos_index>
+   eos_index: !ref <eos_index>
+   blank_index: !ref <blank_index>
+   min_decode_ratio: !ref <min_decode_ratio>
+   max_decode_ratio: !ref <max_decode_ratio>
+   beam_size: !ref <valid_beam_size>
+   eos_threshold: !ref <eos_threshold>
+   using_max_attn_shift: !ref <using_max_attn_shift>
+   max_attn_shift: !ref <max_attn_shift>
+   temperature: !ref <temperature>
+
+test_search: !new:speechbrain.decoders.S2SRNNBeamSearchTransformerLM
+   embedding: !ref <emb>
+   decoder: !ref <dec>
+   linear: !ref <seq_lin>
+   ctc_linear: !ref <ctc_lin>
+   language_model: !ref <lm_model>
+   bos_index: !ref <bos_index>
+   eos_index: !ref <eos_index>
+   blank_index: !ref <blank_index>
+   min_decode_ratio: !ref <min_decode_ratio>
+   max_decode_ratio: !ref <max_decode_ratio>
+   beam_size: !ref <test_beam_size>
+   eos_threshold: !ref <eos_threshold>
+   using_max_attn_shift: !ref <using_max_attn_shift>
+   max_attn_shift: !ref <max_attn_shift>
+   ctc_weight: !ref <ctc_weight_decode>
+   temperature: !ref <temperature>
+
 model_opt_class: !name:torch.optim.Adadelta
    lr: !ref <lr>
    rho: 0.95
@@ -208,23 +243,6 @@ lr_annealing_wav2vec: !new:speechbrain.nnet.schedulers.NewBobScheduler
    improvement_threshold: 0.0025
    annealing_factor: 0.9
    patient: 0
-
-beam_searcher: !new:speechbrain.decoders.S2SRNNBeamSearcher
-   embedding: !ref <emb>
-   decoder: !ref <dec>
-   linear: !ref <seq_lin>
-   ctc_linear: !ref <ctc_lin>
-   bos_index: !ref <bos_index>
-   eos_index: !ref <eos_index>
-   blank_index: !ref <blank_index>
-   min_decode_ratio: !ref <min_decode_ratio>
-   max_decode_ratio: !ref <max_decode_ratio>
-   beam_size: !ref <beam_size>
-   eos_threshold: !ref <eos_threshold>
-   using_max_attn_shift: !ref <using_max_attn_shift>
-   max_attn_shift: !ref <max_attn_shift>
-   temperature: !ref <temperature>
-   ctc_weight: 1.0
 
 tokenizer: !new:sentencepiece.SentencePieceProcessor
 
