@@ -53,14 +53,13 @@ class ASR(sb.core.Brain):
                 wavs = self.hparams.augmentation(wavs, wav_lens)
 
         # Forward pass
-        x = self.modules.wav2vec2(wavs)
-        # x = self.modules.enc(feats)
-
-        e_in = self.modules.emb(tokens_bos)  # y_in bos + tokens
+        feats = self.modules.wav2vec2(wavs)
+        x = self.modules.enc(feats)
 
         # Compute outputs
         p_seq, p_ctc, p_tokens = None, None, None
         if self.hparams.ctc_weight != 1:
+            e_in = self.modules.emb(tokens_bos)  # y_in bos + tokens
             # Output layer for seq2seq log-probabilities
             h, _ = self.modules.dec(e_in, x, wav_lens)
             logits = self.modules.seq_lin(h)
