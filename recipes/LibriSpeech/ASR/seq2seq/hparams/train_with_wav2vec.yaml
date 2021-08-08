@@ -27,10 +27,10 @@ wav2vec2_hub: facebook/wav2vec2-large-960h-lv60-self
 data_folder: !PLACEHOLDER # e,g./path/to/LibriSpeech
 # noise/ris dataset will automatically be downloaded
 data_folder_rirs: !ref <data_folder>
-train_splits: ["train-clean-100"] #, "train-clean-360", "train-other-500"]
+train_splits: ["train-clean-100", "train-clean-360", "train-other-500"]
 dev_splits: ["dev-clean"]
 test_splits: ["test-clean", "test-other"]
-skip_prep: True
+skip_prep: False
 ckpt_interval_minutes: 25 # save checkpoint every N min
 train_csv: !ref <output_folder>/train.csv
 valid_csv: !ref <output_folder>/dev-clean.csv
@@ -41,7 +41,7 @@ test_csv:
 # Training parameters
 number_of_epochs: 2
 number_of_ctc_epochs: 2
-lr: 1.0
+lr: 0.9
 lr_wav2vec: 0.0001
 ctc_weight: 1.0
 sorting: ascending
@@ -53,7 +53,7 @@ sample_rate: 16000
 # With DDP batch_size is multiplied by N jobs
 # Must be 6 per GPU to fit 16GB of VRAM
 batch_size: 8
-test_batch_size: 4
+test_batch_size: 8
 
 # Dataloader options
 train_dataloader_opts:
@@ -78,7 +78,7 @@ dec_neurons: 1024
 freeze_wav2vec: False
 
 # Outputs
-output_neurons: 5000  # BPE size, index(blank/eos/bos) = 0
+output_neurons: 31  # BPE size, index(blank/eos/bos) = 0
 
 # Decoding parameters
 # Be sure that the bos and eos index match with the BPEs ones
@@ -176,9 +176,6 @@ log_softmax: !new:speechbrain.nnet.activations.Softmax
 ctc_cost: !name:speechbrain.nnet.losses.ctc_loss
    blank_index: !ref <blank_index>
 
-seq_cost: !name:speechbrain.nnet.losses.nll_loss
-   label_smoothing: 0.1
-
 modules:
    wav2vec2: !ref <wav2vec2>
    enc: !ref <enc>
@@ -190,39 +187,48 @@ modules:
 model: !new:torch.nn.ModuleList
    - [!ref <enc>, !ref <emb>, !ref <dec>, !ref <ctc_lin>, !ref <seq_lin>]
 
+# Scorer
+ctc_scorer: !new:speechbrain.decoders.scorer.CTCScorer
+  eos_index: 2
+  blank_index: 0
+  ctc_fc: !ref <ctc_lin>
+
+scorer: !new:speechbrain.decoders.scorer.ScorerBuilder
+  scorer_beam_scale: 1.0
+  full_scorers: [!ref <ctc_scorer>]
+  weights:
+    ctc: 1.0     #0.4
+
 valid_search: !new:speechbrain.decoders.S2SRNNBeamSearcher
    embedding: !ref <emb>
    decoder: !ref <dec>
    linear: !ref <seq_lin>
-   ctc_linear: !ref <ctc_lin>
    bos_index: !ref <bos_index>
    eos_index: !ref <eos_index>
-   blank_index: !ref <blank_index>
    min_decode_ratio: !ref <min_decode_ratio>
    max_decode_ratio: !ref <max_decode_ratio>
+   vocab_size: !ref <output_neurons>
    beam_size: !ref <valid_beam_size>
    eos_threshold: !ref <eos_threshold>
    using_max_attn_shift: !ref <using_max_attn_shift>
    max_attn_shift: !ref <max_attn_shift>
    temperature: !ref <temperature>
 
-test_search: !new:speechbrain.decoders.S2SRNNBeamSearchTransformerLM
+test_search: !new:speechbrain.decoders.S2SRNNBeamSearcher
    embedding: !ref <emb>
    decoder: !ref <dec>
    linear: !ref <seq_lin>
-   ctc_linear: !ref <ctc_lin>
-   language_model: !ref <lm_model>
    bos_index: !ref <bos_index>
    eos_index: !ref <eos_index>
-   blank_index: !ref <blank_index>
    min_decode_ratio: !ref <min_decode_ratio>
    max_decode_ratio: !ref <max_decode_ratio>
    beam_size: !ref <test_beam_size>
+   vocab_size: !ref <output_neurons>
    eos_threshold: !ref <eos_threshold>
    using_max_attn_shift: !ref <using_max_attn_shift>
    max_attn_shift: !ref <max_attn_shift>
-   ctc_weight: !ref <ctc_weight_decode>
    temperature: !ref <temperature>
+   scorer: !ref <scorer>
 
 model_opt_class: !name:torch.optim.Adadelta
    lr: !ref <lr>
