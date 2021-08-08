@@ -134,12 +134,64 @@ class S2SGreedySearcher(S2SBaseSearcher):
 
         log_probs = torch.stack(log_probs_lst, dim=1)
         scores, predictions = log_probs.max(dim=-1)
-        scores = scores.sum(dim=1).tolist()
-        predictions = batch_filter_seq2seq_output(
-            predictions, eos_id=self.eos_index
+
+        (
+            top_hyps,
+            top_lengths,
+            top_scores,
+            top_log_probs,
+        ) = self._get_top_prediction(predictions, scores, log_probs)
+
+        return top_hyps, top_lengths, top_scores, top_log_probs
+
+    def _get_top_prediction(self, hyps, scores, log_probs):
+        """This method sorts the scores and return corresponding hypothesis and log probs.
+
+        Arguments
+        ---------
+        hyps_and_scores : list
+            To store generated hypotheses and scores.
+        topk : int
+            Number of hypothesis to return.
+
+        Returns
+        -------
+        topk_hyps : torch.Tensor (batch, topk, max length of token_id sequences)
+            This tensor stores the topk predicted hypothesis.
+        topk_scores : torch.Tensor (batch, topk)
+            The length of each topk sequence in the batch.
+        topk_lengths : torch.Tensor (batch, topk)
+            This tensor contains the final scores of topk hypotheses.
+        topk_log_probs : torch.Tensor (batch, topk, max length of token_id sequences)
+            The log probabilities of each hypotheses.
+        """
+        batch_size = hyps.size(0)
+        max_length = hyps.size(1)
+        top_lengths = [max_length] * batch_size
+
+        # Collect lengths of top hyps
+        for pred_index in range(batch_size):
+            pred = hyps[pred_index]
+            pred_length = (pred == self.eos_index).nonzero(as_tuple=False)
+            if len(pred_length) > 0:
+                top_lengths[pred_index] = pred_length[0].item()
+        # Convert lists to tensors
+        top_lengths = torch.tensor(
+            top_lengths, dtype=torch.float, device=hyps.device
         )
 
-        return predictions, scores
+        # Pick top log probabilities
+        top_log_probs = log_probs
+
+        # Use SpeechBrain style lengths
+        top_lengths = (top_lengths - 1) / max_length
+
+        return (
+            hyps.unsqueeze(1),
+            top_lengths.unsqueeze(1),
+            scores.unsqueeze(1),
+            top_log_probs.unsqueeze(1),
+        )
 
 
 class S2SRNNGreedySearcher(S2SGreedySearcher):
@@ -178,7 +230,7 @@ class S2SRNNGreedySearcher(S2SGreedySearcher):
     ... )
     >>> enc = torch.rand([2, 6, 7])
     >>> wav_len = torch.rand([2])
-    >>> hyps, scores = searcher(enc, wav_len)
+    >>> top_hyps, top_lengths, _, _ = searcher(enc, wav_len)
     """
 
     def __init__(self, embedding, decoder, linear, **kwargs):
@@ -229,8 +281,6 @@ class S2SBeamSearcher(S2SBaseSearcher):
         Scorer instance.
     topk : int
         The number of hypothesis to return. (default: 1)
-    return_log_probs : bool
-        Whether to return log-probabilities. (default: False)
     using_eos_threshold : bool
         Whether to use eos threshold. (default: true)
     eos_threshold : float
@@ -259,7 +309,6 @@ class S2SBeamSearcher(S2SBaseSearcher):
         vocab_size,
         scorer=None,
         topk=1,
-        return_log_probs=False,
         using_eos_threshold=True,
         eos_threshold=1.5,
         length_normalization=True,
@@ -274,12 +323,12 @@ class S2SBeamSearcher(S2SBaseSearcher):
         self.vocab_size = vocab_size
         self.scorer = scorer
         self.topk = topk
-        self.return_log_probs = return_log_probs
         self.length_normalization = length_normalization
         self.using_eos_threshold = using_eos_threshold
         self.eos_threshold = eos_threshold
         self.using_max_attn_shift = using_max_attn_shift
         self.max_attn_shift = max_attn_shift
+        self.attn_weight = 1.0
         self.ctc_weight = 0.0
         self.minus_inf = minus_inf
 
@@ -300,8 +349,9 @@ class S2SBeamSearcher(S2SBaseSearcher):
                     raise ValueError(
                         "Set blank, eos and bos to different indexes for joint ATT/CTC or CTC decoding"
                     )
-            self.ctc_weight = self.scorer.weights["ctc"]
-            self.attn_weight = 1.0 - self.ctc_weight
+
+                self.ctc_weight = self.scorer.weights["ctc"]
+                self.attn_weight = 1.0 - self.ctc_weight
 
     def _check_full_beams(self, hyps, beam_size):
         """This method checks whether hyps has been full.
@@ -411,7 +461,9 @@ class S2SBeamSearcher(S2SBaseSearcher):
             for index in eos_indices:
                 # convert to int
                 index = index.item()
-                batch_id = index // self.beam_size
+                batch_id = torch.div(
+                    index, self.beam_size, rounding_mode="floor"
+                )
                 if len(hyps_and_scores[batch_id]) == self.beam_size:
                     continue
                 hyp = alived_seq[index, :]
@@ -420,7 +472,7 @@ class S2SBeamSearcher(S2SBaseSearcher):
                 hyps_and_scores[batch_id].append((hyp, log_probs, final_scores))
         return is_eos
 
-    def _get_top_score_prediction(self, hyps_and_scores, topk):
+    def _get_topk_prediction(self, hyps_and_scores, topk):
         """This method sorts the scores and return corresponding hypothesis and log probs.
 
         Arguments
@@ -434,11 +486,11 @@ class S2SBeamSearcher(S2SBaseSearcher):
         -------
         topk_hyps : torch.Tensor (batch, topk, max length of token_id sequences)
             This tensor stores the topk predicted hypothesis.
-        topk_scores : torch.Tensor (batch, topk)
-            The length of each topk sequence in the batch.
         topk_lengths : torch.Tensor (batch, topk)
             This tensor contains the final scores of topk hypotheses.
-        topk_log_probs : list
+        topk_scores : torch.Tensor (batch, topk)
+            The length of each topk sequence in the batch.
+        topk_log_probs : torch.Tensor (batch, topk, max length of token_id sequences)
             The log probabilities of each hypotheses.
         """
         top_hyps, top_log_probs, top_scores, top_lengths = [], [], [], []
@@ -451,26 +503,38 @@ class S2SBeamSearcher(S2SBaseSearcher):
             top_scores += scores
             top_log_probs += log_probs
             top_lengths += [len(hyp) for hyp in hyps]
+        # Convert lists to tensors
         top_hyps = torch.nn.utils.rnn.pad_sequence(
             top_hyps, batch_first=True, padding_value=0
         )
-        top_scores = torch.stack((top_scores), dim=0).view(batch_size, -1)
-        top_lengths = torch.tensor(
-            top_lengths, dtype=torch.int, device=top_scores.device
+        top_log_probs = torch.nn.utils.rnn.pad_sequence(
+            top_log_probs, batch_first=True, padding_value=0
         )
+        top_lengths = torch.tensor(
+            top_lengths, dtype=torch.float, device=top_hyps.device
+        )
+        top_scores = torch.stack((top_scores), dim=0).view(batch_size, -1)
+
+        # Use SpeechBrain style lengths
+        top_lengths = (top_lengths - 1) / top_hyps.size(1)
+
         # Get topk indices
         topk_scores, indices = top_scores.topk(self.topk, dim=-1)
         indices = (indices + self.beam_offset.unsqueeze(1)).view(
             batch_size * self.topk
         )
         # Select topk hypotheses
-        topk_hyps = torch.index_select(top_hyps, dim=0, index=indices,)
-        topk_hyps = topk_hyps.view(batch_size, self.topk, -1)
-        topk_lengths = torch.index_select(top_lengths, dim=0, index=indices,)
-        topk_lengths = topk_lengths.view(batch_size, self.topk)
-        topk_log_probs = [top_lengths[index.item()] for index in indices]
+        topk_hyps = torch.index_select(top_hyps, dim=0, index=indices,).view(
+            batch_size, self.topk, -1
+        )
+        topk_lengths = torch.index_select(
+            top_lengths, dim=0, index=indices,
+        ).view(batch_size, self.topk)
+        topk_log_probs = torch.index_select(
+            top_log_probs, dim=0, index=indices,
+        ).view(batch_size, self.topk, -1)
 
-        return topk_hyps, topk_scores, topk_lengths, topk_log_probs
+        return topk_hyps, topk_lengths, topk_scores, topk_log_probs
 
     def forward(self, enc_states, wav_len):  # noqa: C901
         enc_lens = torch.round(enc_states.shape[1] * wav_len).int()
@@ -510,7 +574,7 @@ class S2SBeamSearcher(S2SBaseSearcher):
         # keep the sequences that still not reaches eos.
         alived_seq = torch.empty(n_bh, 0, device=device).long()
 
-        # Keep the log-probabilities of alived sequences.
+        # Keep the log-probabilities of alived log_probs
         alived_log_probs = torch.empty(n_bh, 0, device=device)
 
         min_decode_steps = int(enc_states.shape[1] * self.min_decode_ratio)
@@ -553,9 +617,6 @@ class S2SBeamSearcher(S2SBaseSearcher):
                     inp_tokens, scorer_memory, attn, log_probs, self.beam_size
                 )
 
-            # Keep the original value
-            log_probs_clone = log_probs.clone().reshape(batch_size, -1)
-
             # Set the eos prob to minus_inf when it doesn't exceed threshold.
             if self.using_eos_threshold:
                 cond = self._check_eos_threshold(log_probs)
@@ -567,6 +628,9 @@ class S2SBeamSearcher(S2SBaseSearcher):
 
             scores = sequence_scores.unsqueeze(1).expand(-1, self.vocab_size)
             scores = scores + log_probs
+
+            # Keep the original value
+            log_probs_clone = log_probs.clone().reshape(batch_size, -1)
 
             # length normalization
             if self.length_normalization:
@@ -589,7 +653,7 @@ class S2SBeamSearcher(S2SBaseSearcher):
 
             # The index of which beam the current top-K output came from in (t-1) timesteps.
             predecessors = (
-                candidates // self.vocab_size
+                torch.div(candidates, self.vocab_size, rounding_mode="floor")
                 + self.beam_offset.unsqueeze(1).expand_as(candidates)
             ).view(n_bh)
 
@@ -621,6 +685,8 @@ class S2SBeamSearcher(S2SBaseSearcher):
             beam_log_probs = log_probs_clone[
                 torch.arange(batch_size).unsqueeze(1), candidates
             ].reshape(n_bh)
+
+            # Update alived_log_probs
             alived_log_probs = torch.cat(
                 [
                     torch.index_select(
@@ -657,20 +723,12 @@ class S2SBeamSearcher(S2SBaseSearcher):
 
         (
             topk_hyps,
-            topk_scores,
             topk_lengths,
-            log_probs,
-        ) = self._get_top_score_prediction(hyps_and_scores, topk=self.topk,)
-        # pick the best hyp
-        predictions = topk_hyps[:, 0, :]
-        predictions = batch_filter_seq2seq_output(
-            predictions, eos_id=self.eos_index
-        )
+            topk_scores,
+            topk_log_probs,
+        ) = self._get_topk_prediction(hyps_and_scores, topk=self.topk,)
 
-        if self.return_log_probs:
-            return predictions, topk_scores, log_probs
-        else:
-            return predictions, topk_scores
+        return topk_hyps, topk_lengths, topk_scores, topk_log_probs
 
     def permute_mem(self, memory, index):
         """This method permutes the seq2seq model memory
@@ -724,6 +782,7 @@ class S2SRNNBeamSearcher(S2SBeamSearcher):
     >>> scorer = sb.decoders.scorer.ScorerBuilder(
     ...     full_scorers = [coverage_scorer],
     ...     partial_scorers = [],
+    ...     weights= dict(coverage=1.5)
     ... )
     >>> searcher = S2SRNNBeamSearcher(
     ...     embedding=emb,
@@ -734,11 +793,12 @@ class S2SRNNBeamSearcher(S2SBeamSearcher):
     ...     min_decode_ratio=0,
     ...     max_decode_ratio=1,
     ...     beam_size=2,
+    ...     vocab_size=vocab_size,
     ...     scorer=scorer,
     ... )
     >>> enc = torch.rand([2, 6, 7])
     >>> wav_len = torch.rand([2])
-    >>> hyps, scores = searcher(enc, wav_len)
+    >>> topk_hyps, topk_lengths, _, _ = searcher(enc, wav_len)
     """
 
     def __init__(
@@ -898,67 +958,3 @@ def mask_by_condition(tensor, cond, fill_value):
         cond, tensor, torch.Tensor([fill_value]).to(tensor.device)
     )
     return tensor
-
-
-def batch_filter_seq2seq_output(prediction, eos_id=-1):
-    """Calling batch_size times of filter_seq2seq_output.
-
-    Arguments
-    ---------
-    prediction : list of torch.Tensor
-        A list containing the output ints predicted by the seq2seq system.
-    eos_id : int, string
-        The id of the eos.
-
-    Returns
-    ------
-    list
-        The output predicted by seq2seq model.
-
-    Example
-    -------
-    >>> predictions = [torch.IntTensor([1,2,3,4]), torch.IntTensor([2,3,4,5,6])]
-    >>> predictions = batch_filter_seq2seq_output(predictions, eos_id=4)
-    >>> predictions
-    [[1, 2, 3], [2, 3]]
-    """
-    outputs = []
-    for p in prediction:
-        res = filter_seq2seq_output(p.tolist(), eos_id=eos_id)
-        outputs.append(res)
-    return outputs
-
-
-def filter_seq2seq_output(string_pred, eos_id=-1):
-    """Filter the output until the first eos occurs (exclusive).
-
-    Arguments
-    ---------
-    string_pred : list
-        A list containing the output strings/ints predicted by the seq2seq system.
-    eos_id : int, string
-        The id of the eos.
-
-    Returns
-    ------
-    list
-        The output predicted by seq2seq model.
-
-    Example
-    -------
-    >>> string_pred = ['a','b','c','d','eos','e']
-    >>> string_out = filter_seq2seq_output(string_pred, eos_id='eos')
-    >>> string_out
-    ['a', 'b', 'c', 'd']
-    """
-    if isinstance(string_pred, list):
-        try:
-            eos_index = next(
-                i for i, v in enumerate(string_pred) if v == eos_id
-            )
-        except StopIteration:
-            eos_index = len(string_pred)
-        string_out = string_pred[:eos_index]
-    else:
-        raise ValueError("The input must be a list.")
-    return string_out

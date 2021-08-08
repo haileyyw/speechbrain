@@ -41,7 +41,7 @@ from pathlib import Path
 import speechbrain as sb
 from hyperpyyaml import load_hyperpyyaml
 from speechbrain.utils.distributed import run_on_main
-
+from speechbrain.utils.data_utils import undo_padding
 
 logger = logging.getLogger(__name__)
 
@@ -87,17 +87,26 @@ class ASR(sb.core.Brain):
 
         # Compute outputs
         hyps = None
-        if stage == sb.Stage.TRAIN:
-            hyps = None
-        elif stage == sb.Stage.VALID:
-            hyps = None
-            current_epoch = self.hparams.epoch_counter.current
-            if current_epoch % self.hparams.valid_search_interval == 0:
-                # for the sake of efficiency, we only perform beamsearch with limited capacity
-                # and no LM to give user some idea of how the AM is doing
-                hyps, _ = self.hparams.valid_search(enc_out.detach(), wav_lens)
-        elif stage == sb.Stage.TEST:
-            hyps, _ = self.hparams.test_search(enc_out.detach(), wav_lens)
+        current_epoch = self.hparams.epoch_counter.current
+        is_valid_search = (
+            stage == sb.Stage.VALID
+            and current_epoch % self.hparams.valid_search_every == 0
+        )
+        is_test_search = stage == sb.Stage.TEST
+
+        if any([is_valid_search, is_test_search]):
+            # Note: For valid_search, for the sake of efficiency, we only perform beamsearch with
+            # limited capacity and no LM to give user some idea of how the AM is doing
+
+            # Decide searcher for inference: valid or test search
+            search = getattr(self.hparams, f"{stage.name}_search".lower())
+            topk_tokens, topk_lens, _, _ = search(enc_out.detach(), wav_lens)
+
+            # Select the best hypothesis
+            best_hyps, best_lens = topk_tokens[:, 0, :], topk_lens[:, 0]
+
+            # Convert best hypothesis to list
+            hyps = undo_padding(best_hyps, best_lens)
 
         return p_ctc, p_seq, wav_lens, hyps
 
@@ -129,8 +138,8 @@ class ASR(sb.core.Brain):
 
         if stage != sb.Stage.TRAIN:
             current_epoch = self.hparams.epoch_counter.current
-            valid_search_interval = self.hparams.valid_search_interval
-            if current_epoch % valid_search_interval == 0 or (
+            valid_search_every = self.hparams.valid_search_every
+            if current_epoch % valid_search_every == 0 or (
                 stage == sb.Stage.TEST
             ):
                 # Decode token terms to words
@@ -190,9 +199,9 @@ class ASR(sb.core.Brain):
         else:
             stage_stats["ACC"] = self.acc_metric.summarize()
             current_epoch = self.hparams.epoch_counter.current
-            valid_search_interval = self.hparams.valid_search_interval
+            valid_search_every = self.hparams.valid_search_every
             if (
-                current_epoch % valid_search_interval == 0
+                current_epoch % valid_search_every == 0
                 or stage == sb.Stage.TEST
             ):
                 stage_stats["WER"] = self.wer_metric.summarize("error_rate")
@@ -311,6 +320,26 @@ def dataio_prepare(hparams):
         csv_path=hparams["train_csv"], replacements={"data_root": data_folder},
     )
 
+    if hparams["sorting"] == "ascending":
+        # we sort training data to speed up training and get better results.
+        train_data = train_data.filtered_sorted(sort_key="duration")
+        # when sorting do not shuffle in dataloader ! otherwise is pointless
+        hparams["train_dataloader_opts"]["shuffle"] = False
+
+    elif hparams["sorting"] == "descending":
+        train_data = train_data.filtered_sorted(
+            sort_key="duration", reverse=True
+        )
+        # when sorting do not shuffle in dataloader ! otherwise is pointless
+        hparams["train_dataloader_opts"]["shuffle"] = False
+
+    elif hparams["sorting"] == "random":
+        pass
+
+    else:
+        raise NotImplementedError(
+            "sorting must be random, ascending or descending"
+        )
     valid_data = sb.dataio.dataset.DynamicItemDataset.from_csv(
         csv_path=hparams["valid_csv"], replacements={"data_root": data_folder},
     )
@@ -324,7 +353,7 @@ def dataio_prepare(hparams):
             csv_path=csv_file, replacements={"data_root": data_folder}
         )
         test_datasets[name] = test_datasets[name].filtered_sorted(
-            sort_key="duration"
+            sort_key="duration", reverse=True
         )
 
     datasets = [train_data, valid_data] + [i for k, i in test_datasets.items()]

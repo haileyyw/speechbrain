@@ -16,6 +16,7 @@ class BaseScorerInterface:
         - speechbrain.decoders.scorer.TransformerLMScorer
         - speechbrain.decoders.scorer.NGramLMScoer
         - speechbrain.decoders.scorer.CoverageScorer
+        - speechbrain.decoders.scorer.LengthScorer
     """
 
     def score(self, inp_tokens, memory, candidates, attn):
@@ -136,7 +137,6 @@ class RNNLMScorer(BaseScorerInterface):
         with torch.no_grad():
             logits, hs = self.lm(inp_tokens, hx=memory)
             log_probs = self.softmax(logits / self.temperature)
-
         return log_probs, hs
 
     def permute_mem(self, memory, index):
@@ -171,16 +171,17 @@ class TransformerLMScorer(BaseScorerInterface):
         self.softmax = sb.nnet.activations.Softmax(apply_log=True)
 
     def score(self, inp_tokens, memory, candidates, attn):
-        if memory is None:
-            memory = torch.empty(
-                inp_tokens.size(0), 0, device=inp_tokens.device
-            )
-        # Append the predicted token of the previous step to existing memory.
-        memory = torch.cat([memory, inp_tokens.unsqueeze(1)], dim=-1)
-        if not next(self.lm.parameters()).is_cuda:
-            self.lm.to(inp_tokens.device)
-        logits = self.lm(memory)
-        log_probs = self.softmax(logits / self.temperature)
+        with torch.no_grad():
+            if memory is None:
+                memory = torch.empty(
+                    inp_tokens.size(0), 0, device=inp_tokens.device
+                )
+            # Append the predicted token of the previous step to existing memory.
+            memory = torch.cat([memory, inp_tokens.unsqueeze(1)], dim=-1)
+            if not next(self.lm.parameters()).is_cuda:
+                self.lm.to(inp_tokens.device)
+            logits = self.lm(memory)
+            log_probs = self.softmax(logits / self.temperature)
         return log_probs[:, -1, :], memory
 
     def permute_mem(self, memory, index):
@@ -192,31 +193,46 @@ class TransformerLMScorer(BaseScorerInterface):
 
 
 class NGramLMScorer(BaseScorerInterface):
-    """A word-piece ngram LM scorer.
+    """A ngram LM scorer. Please make sure the tokenizer or token_list
+    matches the tokenizer of the ASR model.
 
     Arguments
     ---------
     lm_path : str
         The path of ngram model.
-    tokenizer_path : str
-        The path of pre-trained sentencepiece tokenizer.
     vocab_size: int
         The total number of tokens.
+    tokenizer_path : str
+        The path of pre-trained sentencepiece tokenizer.
+    token_list : list
+        The tokens set.
     """
 
-    def __init__(self, lm_path, tokenizer_path, vocab_size):
+    def __init__(self, lm_path, vocab_size, tokenizer_path=None, token_list=[]):
         self.lm = kenlm.Model(lm_path)
         self.vocab_size = vocab_size
         self.full_candidates = np.arange(self.vocab_size)
         self.minus_inf = -1e20
 
-        # Create token list
-        tokenizer = spm.SentencePieceProcessor()
-        tokenizer.load(tokenizer_path)
-        self.id2char = [
-            tokenizer.id_to_piece([i])[0].replace("\u2581", "_")
-            for i in range(vocab_size)
-        ]
+        if len(token_list) > 0:
+            assert (
+                len(token_list) == vocab_size
+            ), "The size of the token_list and vocab_size are not matched."
+            self.id2char = token_list
+
+        elif tokenizer_path is not None:
+            # Create token list
+            tokenizer = spm.SentencePieceProcessor()
+            tokenizer.load(tokenizer_path)
+            self.id2char = [
+                tokenizer.id_to_piece([i])[0].replace("\u2581", "_")
+                for i in range(vocab_size)
+            ]
+
+        else:
+            raise ValueError(
+                "Please specify the token list or the path to the spm tokenizer."
+            )
 
     def score(self, inp_tokens, memory, candidates, attn):
         n_bh = inp_tokens.size(0)

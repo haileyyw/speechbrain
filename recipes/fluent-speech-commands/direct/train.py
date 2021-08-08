@@ -21,6 +21,7 @@ import speechbrain as sb
 import logging
 from hyperpyyaml import load_hyperpyyaml
 from speechbrain.utils.distributed import run_on_main
+from speechbrain.utils.data_utils import undo_padding
 
 logger = logging.getLogger(__name__)
 
@@ -36,14 +37,28 @@ class SLU(sb.Brain):
 
         # Add augmentation if specified
         if stage == sb.Stage.TRAIN:
-            if hasattr(self.hparams, "env_corrupt"):
-                wavs_noise = self.hparams.env_corrupt(wavs, wav_lens)
-                wavs = torch.cat([wavs, wavs_noise], dim=0)
-                wav_lens = torch.cat([wav_lens, wav_lens])
-                tokens_bos = torch.cat([tokens_bos, tokens_bos], dim=0)
-                tokens_bos_lens = torch.cat([tokens_bos_lens, tokens_bos_lens])
-            if hasattr(self.hparams, "augmentation"):
-                wavs = self.hparams.augmentation(wavs, wav_lens)
+            # Applying the augmentation pipeline
+            wavs_aug_tot = []
+            wavs_aug_tot.append(wavs)
+            for count, augment in enumerate(self.hparams.augment_pipeline):
+
+                # Apply augment
+                wavs_aug = augment(wavs, wav_lens)
+
+                # Managing speed change
+                if wavs_aug.shape[1] > wavs.shape[1]:
+                    wavs_aug = wavs_aug[:, 0 : wavs.shape[1]]
+                else:
+                    zero_sig = torch.zeros_like(wavs)
+                    zero_sig[:, 0 : wavs_aug.shape[1]] = wavs_aug
+                    wavs_aug = zero_sig
+
+                wavs_aug_tot.append(wavs_aug)
+
+            wavs = torch.cat(wavs_aug_tot, dim=0)
+            self.n_augment = len(wavs_aug_tot)
+            wav_lens = torch.cat([wav_lens] * self.n_augment)
+            tokens_bos = torch.cat([tokens_bos] * self.n_augment)
 
         # ASR encoder forward pass
         with torch.no_grad():
@@ -61,25 +76,23 @@ class SLU(sb.Brain):
         p_seq = self.hparams.log_softmax(logits)
 
         # Compute outputs
-        if (
-            stage == sb.Stage.TRAIN
-            and self.batch_count % show_results_every != 0
-        ):
-            return p_seq, wav_lens
-        else:
-            p_tokens, scores = self.hparams.beam_searcher(encoder_out, wav_lens)
-            return p_seq, wav_lens, p_tokens
+        p_tokens = None
+        if stage != sb.Stage.TRAIN:
+            topk_tokens, topk_lens, _, _ = self.hparams.beam_searcher(
+                encoder_out, wav_lens
+            )
+            # Select the best hypothesis
+            best_hyps, best_lens = topk_tokens[:, 0, :], topk_lens[:, 0]
+
+            # Convert best hypothesis to list
+            p_tokens = undo_padding(best_hyps, best_lens)
+
+        return p_seq, wav_lens, p_tokens
 
     def compute_objectives(self, predictions, batch, stage):
         """Computes the loss (NLL) given predictions and targets."""
 
-        if (
-            stage == sb.Stage.TRAIN
-            and self.batch_count % show_results_every != 0
-        ):
-            p_seq, wav_lens = predictions
-        else:
-            p_seq, wav_lens, predicted_tokens = predictions
+        p_seq, wav_lens, predicted_tokens = predictions
 
         ids = batch.id
         tokens_eos, tokens_eos_lens = batch.tokens_eos
@@ -89,6 +102,12 @@ class SLU(sb.Brain):
             tokens_eos = torch.cat([tokens_eos, tokens_eos], dim=0)
             tokens_eos_lens = torch.cat(
                 [tokens_eos_lens, tokens_eos_lens], dim=0
+            )
+
+        if stage == sb.Stage.TRAIN:
+            tokens_eos = torch.cat([tokens_eos] * self.n_augment, dim=0)
+            tokens_eos_lens = torch.cat(
+                [tokens_eos_lens] * self.n_augment, dim=0
             )
 
         loss_seq = self.hparams.seq_cost(

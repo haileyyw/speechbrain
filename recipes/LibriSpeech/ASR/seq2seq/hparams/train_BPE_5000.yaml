@@ -33,7 +33,7 @@ data_folder_rirs: !ref <data_folder>
 train_splits: ["train-clean-100", "train-clean-360", "train-other-500"]
 dev_splits: ["dev-clean"]
 test_splits: ["test-clean", "test-other"]
-skip_prep: True
+skip_prep: False
 ckpt_interval_minutes: 25 # save checkpoint every N min
 train_csv: !ref <output_folder>/train.csv
 valid_csv: !ref <output_folder>/dev-clean.csv
@@ -67,7 +67,7 @@ valid_dataloader_opts:
    batch_size: !ref <batch_size>
 
 test_dataloader_opts:
-   batch_size: 1
+   batch_size: !ref <batch_size>
 
 # Model parameters
 activation: !name:torch.nn.LeakyReLU
@@ -267,9 +267,8 @@ test_search: !new:speechbrain.decoders.S2SRNNBeamSearcher
    eos_threshold: !ref <eos_threshold>
    using_max_attn_shift: !ref <using_max_attn_shift>
    using_eos_threshold: !ref <using_eos_threshold>
-   max_attn_shift: !ref <max_attn_shift>
-   scorer: !ref <scorer>
    temperature: !ref <temperature>
+   scorer: !ref <scorer>
 
 lr_annealing: !new:speechbrain.nnet.schedulers.NewBobScheduler
    initial_value: !ref <lr>
