@@ -7,7 +7,8 @@
 # Seed needs to be set at top of yaml, before objects with parameters are made
 seed: 1986
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
-output_folder: !ref results/wav2vec2_ctc/<seed>
+#output_folder: !ref results/wav2vec2_ctc/<seed>
+output_folder: !ref results/wav2vec2_ctc_hubert/<seed>
 wer_file: !ref <output_folder>/wer.txt
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
@@ -21,7 +22,8 @@ train_log: !ref <output_folder>/train_log.txt
 pretrained_lm_tokenizer_path: speechbrain/asr-crdnn-transformerlm-librispeech
 
 # URL for the biggest Fairseq english wav2vec2 model.
-wav2vec2_hub: facebook/wav2vec2-large-960h-lv60-self
+#wav2vec2_hub: facebook/wav2vec2-large-960h-lv60-self
+wav2vec2_hub: facebook/hubert-xlarge-ll60k
 
 # Data files
 data_folder: !PLACEHOLDER # e,g./path/to/LibriSpeech
@@ -30,7 +32,7 @@ data_folder_rirs: !ref <data_folder>
 train_splits: ["train-clean-100", "train-clean-360", "train-other-500"]
 dev_splits: ["dev-clean"]
 test_splits: ["test-clean", "test-other"]
-skip_prep: False
+skip_prep: True
 ckpt_interval_minutes: 25 # save checkpoint every N min
 train_csv: !ref <output_folder>/train.csv
 valid_csv: !ref <output_folder>/dev-clean.csv
@@ -88,7 +90,7 @@ eos_index: 2
 min_decode_ratio: 0.0
 max_decode_ratio: 1.0
 valid_beam_size: 10
-test_beam_size: 10
+test_beam_size: 4 #10
 eos_threshold: 1.5
 using_max_attn_shift: False
 max_attn_shift: 140
