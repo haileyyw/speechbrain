@@ -78,8 +78,6 @@ class ASR(sb.Brain):
             p_tokens = sb.decoders.ctc_greedy_decode(
                 p_ctc, wav_lens, blank_id=self.hparams.blank_index
             )
-
-        print(p_tokens)
         return p_ctc, wav_lens, p_tokens
 
     def compute_objectives(self, predictions, batch, stage):
@@ -265,6 +263,7 @@ def dataio_prepare(hparams):
         "wrd", "char_list", "tokens_list", "tokens_bos", "tokens_eos", "tokens"
     )
     def text_pipeline(wrd):
+        yield wrd
         char_list = list(wrd)
         yield char_list
         tokens_list = label_encoder.encode_sequence(char_list)
