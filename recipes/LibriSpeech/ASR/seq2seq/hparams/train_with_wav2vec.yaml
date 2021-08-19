@@ -8,7 +8,7 @@
 seed: 1986
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
 #output_folder: !ref results/wav2vec2_ctc/<seed>
-output_folder: !ref results/wav2vec2_ctc_2/<seed>
+output_folder: !ref results/wav2vec2_ctc/<seed>
 wer_file: !ref <output_folder>/wer.txt
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
@@ -56,17 +56,12 @@ valid_dataloader_opts:
    batch_size: !ref <batch_size>
 
 test_dataloader_opts:
-   batch_size: 1
-
-# BPE parameters
-token_type: unigram  # ["unigram", "bpe", "char"]
-character_coverage: 1.0
+   batch_size: !ref <test_batch_size>
 
 # Model parameters
 activation: !name:torch.nn.LeakyReLU
 dnn_layers: 2
 dnn_neurons: 1024
-emb_size: 128
 dec_neurons: 1024
 freeze_wav2vec: False
 
@@ -134,53 +129,11 @@ ctc_cost: !name:speechbrain.nnet.losses.ctc_loss
 
 modules:
    wav2vec2: !ref <wav2vec2>
+   enc: !ref <enc>
    ctc_lin: !ref <ctc_lin>
 
 model: !new:torch.nn.ModuleList
    - [!ref <enc>, !ref <ctc_lin>]
-
-# Scorer
-ctc_scorer: !new:speechbrain.decoders.scorer.CTCScorer
-   eos_index: 2
-   blank_index: 0
-   ctc_fc: !ref <ctc_lin>
-
-scorer: !new:speechbrain.decoders.scorer.ScorerBuilder
-   scorer_beam_scale: 1.0
-   full_scorers: [!ref <ctc_scorer>]
-   weights:
-      ctc: 1.0     #0.4
-
-valid_search: !new:speechbrain.decoders.S2SRNNBeamSearcher
-   embedding: !ref <emb>
-   decoder: !ref <dec>
-   linear: !ref <seq_lin>
-   bos_index: !ref <bos_index>
-   eos_index: !ref <eos_index>
-   min_decode_ratio: !ref <min_decode_ratio>
-   max_decode_ratio: !ref <max_decode_ratio>
-   vocab_size: !ref <output_neurons>
-   beam_size: !ref <valid_beam_size>
-   eos_threshold: !ref <eos_threshold>
-   using_max_attn_shift: !ref <using_max_attn_shift>
-   max_attn_shift: !ref <max_attn_shift>
-   temperature: !ref <temperature>
-
-test_search: !new:speechbrain.decoders.S2SRNNBeamSearcher
-   embedding: !ref <emb>
-   decoder: !ref <dec>
-   linear: !ref <seq_lin>
-   bos_index: !ref <bos_index>
-   eos_index: !ref <eos_index>
-   min_decode_ratio: !ref <min_decode_ratio>
-   max_decode_ratio: !ref <max_decode_ratio>
-   beam_size: !ref <test_beam_size>
-   vocab_size: !ref <output_neurons>
-   eos_threshold: !ref <eos_threshold>
-   using_max_attn_shift: !ref <using_max_attn_shift>
-   max_attn_shift: !ref <max_attn_shift>
-   temperature: !ref <temperature>
-   scorer: !ref <scorer>
 
 model_opt_class: !name:torch.optim.Adadelta
    lr: !ref <lr>
