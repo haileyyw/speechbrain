@@ -268,11 +268,12 @@ def dataio_prepare(hparams):
     # 3. Define text pipeline:
     @sb.utils.data_pipeline.takes("wrd")
     @sb.utils.data_pipeline.provides(
-        "wrd", "tokens_list", "tokens_bos", "tokens_eos", "tokens"
+        "char_list", "tokens_list", "tokens_bos", "tokens_eos", "tokens"
     )
     def text_pipeline(wrd):
-        yield wrd
-        tokens_list = label_encoder.encode_sequence(list(wrd))
+        char_list = list(wrd)
+        yield char_list
+        tokens_list = label_encoder.encode_sequence(char_list)
         yield tokens_list
         tokens_bos = torch.LongTensor([hparams["bos_index"]] + (tokens_list))
         yield tokens_bos
@@ -299,7 +300,8 @@ def dataio_prepare(hparams):
 
     # 4. Set output:
     sb.dataio.dataset.set_output_keys(
-        datasets, ["id", "sig", "wrd", "tokens_bos", "tokens_eos", "tokens"],
+        datasets,
+        ["id", "sig", "char_list", "tokens_bos", "tokens_eos", "tokens"],
     )
     return train_data, valid_data, test_datasets, label_encoder
 
