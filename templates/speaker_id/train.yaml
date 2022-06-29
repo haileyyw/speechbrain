@@ -46,8 +46,8 @@ n_mels: 23
 sample_rate: 16000
 number_of_epochs: 35
 batch_size: 16
-lr_start: 0.001
-lr_final: 0.0001
+lr_start: 0.01
+lr_final: 0.001
 n_classes: 28 # In this case, we have 28 speakers
 emb_dim: 512 # dimensionality of the embeddings
 dataloader_options:
