@@ -11,7 +11,8 @@ save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
 
 # Data files
-data_folder: !PLACEHOLDER  # e.g. /path/to/Voxceleb
+# data_folder: !PLACEHOLDER  # e.g. /path/to/Voxceleb
+data_folder: ./data
 train_annotation: !ref <save_folder>/train.csv
 valid_annotation: !ref <save_folder>/dev.csv
 
