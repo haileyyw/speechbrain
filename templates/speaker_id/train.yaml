@@ -40,7 +40,7 @@ error_stats: !name:speechbrain.utils.metric_stats.MetricStats
 ckpt_interval_minutes: 15 # save checkpoint every N min
 
 # Feature parameters
-n_mels: 23
+n_mels: 16
 
 # Training Parameters
 sample_rate: 16000
@@ -49,7 +49,7 @@ batch_size: 16
 lr_start: 0.01
 lr_final: 0.001
 n_classes: 28 # In this case, we have 28 speakers
-emb_dim: 512 # dimensionality of the embeddings
+emb_dim: 128 # dimensionality of the embeddings
 dataloader_options:
     batch_size: !ref <batch_size>
 
